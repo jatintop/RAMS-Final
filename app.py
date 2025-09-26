@@ -108,7 +108,7 @@ def run_cv_logic():
 
     # Counters and constants
     EYE_AR_THRESH = 0.25 # Threshold for eye closure
-    EYE_AR_CONSEC_FRAMES = 20 # Number of consecutive frames eyes must be closed
+    EYE_AR_CONSEC_FRAMES = 5 # Number of consecutive frames eyes must be closed
     YAWN_THRESH = 0.5
     
     eye_counter = 0
