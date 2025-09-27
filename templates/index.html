@@ -4,11 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Driver Assistance System</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"> 
 </head>
 <body>
     <div class="main-title glow">Real Time Attention Monitoring System</div>
+    
     <div class="container">
+        
         <div class="left-panel">
             <h2 class="panel-title glow">Live Webcam Feed</h2>
             <div class="video-container">
@@ -25,10 +27,6 @@
         <div class="right-panel">
             <div class="header">
                 <h2 class="panel-title">System Status</h2>
-                <div class="controls">
-                    <button id="start-btn" class="control-btn">Start</button>
-                    <button id="stop-btn" class="control-btn">Stop</button>
-                </div>
             </div>
 
             <div class="status-grid">
@@ -54,18 +52,19 @@
             </div>
             
             <div class="log-section">
-                <h3>Alert History Log</h3>
+                <h3 class="panel-title">Alert History Log</h3>
                 <div class="log-header">
                     <button id="clear-log-btn" class="log-btn">Clear Log</button>
                     <span id="log-total">Total: 0 alerts</span>
                 </div>
                 <ul id="alert-history-list" class="alert-log">
-                    </ul>
+                </ul>
             </div>
         </div>
     </div>
+    
     <footer class="footer">
-        &copy; JVM, Christ University, Bangalore 2025
+        &copy; Project Name / Institution 2025
     </footer>
 
     <script>
@@ -75,61 +74,37 @@
             document.getElementById('current-datetime').textContent = now.toLocaleString('en-US', options);
         }
 
-        async function dismissAlert() {
-            // This function is kept for future use if a dismiss endpoint is added.
-            // For now, alerts are managed by the backend state.
-            console.log("Dismiss button clicked.");
-        }
-
         async function clearLog() {
             try {
                 await fetch('/clear_log', { method: 'POST' });
-                updateStatus(); // Refresh the UI to show the cleared log
+                updateStatus(); 
             } catch (error) {
                 console.error('Failed to clear log:', error);
             }
         }
-
-        async function startCV() {
-            try {
-                document.getElementById('video-stream').style.display = 'block';
-                await fetch('/start_cv', { method: 'POST' });
-                console.log("Attempted to start CV thread.");
-            } catch (error) {
-                console.error('Failed to send start command:', error);
-            }
-        }
-
-        async function stopCV() {
-            try {
-                await fetch('/stop_cv', { method: 'POST' });
-                document.getElementById('video-stream').style.display = 'none';
-                console.log("Attempted to stop CV thread.");
-            } catch (error) {
-                console.error('Failed to send stop command:', error);
-            }
+        
+        async function dismissAlert() {
+             console.log("Alert dismissal confirmed in UI.");
         }
 
         async function updateStatus() {
             try {
                 const response = await fetch('/status');
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
+                if (!response.ok) { throw new Error('Network response was not ok'); }
                 const data = await response.json();
 
                 // 1. Update Attention and Alertness
                 document.getElementById('attention-score').textContent = `${data.attention_score}%`;
                 const alertnessEl = document.getElementById('alertness-level');
                 alertnessEl.textContent = data.alertness;
-                alertnessEl.className = 'status-value large';
+                
+                // Set color class (High/Medium/Low)
+                alertnessEl.className = 'status-value large'; 
                 if (data.alertness === 'Low') {
-                    alertnessEl.classList.add('low');
+                    alertnessEl.classList.add('low'); 
                 } else if (data.alertness === 'Medium') {
-                    alertnessEl.classList.add('medium');
-                } else if (data.alertness === 'N/A') {
-                    alertnessEl.classList.add('medium'); // Or a neutral color
-                }
+                    alertnessEl.classList.add('medium'); 
+                } 
 
                 // 2. Update Current Alert Box
                 const alertBox = document.getElementById('current-alert-box');
@@ -138,7 +113,7 @@
                 const alertIcon = alertBox.querySelector('.icon');
                 const dismissBtn = document.getElementById('dismiss-alert-btn');
 
-                alertBox.className = 'alert-box';
+                alertBox.className = 'alert-box'; 
                 if (data.current_alert === 'No Active Alert') {
                     alertBox.classList.add('alert-none');
                     alertTitle.textContent = 'No Active Alert';
@@ -150,13 +125,7 @@
                     alertDetails.textContent = `Severity: ${data.alert_severity} | Detected at: ${data.alert_timestamp}`;
                     alertIcon.innerHTML = '&#9888;';
                     dismissBtn.style.display = 'block';
-                    if (data.alert_severity === 'HIGH') {
-                        alertBox.classList.add('alert-high');
-                    } else if (data.alert_severity === 'MEDIUM') {
-                         alertBox.classList.add('alert-medium');
-                    } else {
-                        alertBox.classList.add('alert-low');
-                    }
+                    alertBox.classList.add(`alert-${data.alert_severity.toLowerCase()}`);
                 }
                 
                 // 3. Update Alert History
@@ -164,7 +133,7 @@
                 historyList.innerHTML = '';
                 if (data.alert_history.length === 0) {
                     const li = document.createElement('li');
-                    li.className = 'log-item-empty';
+                    li.className = 'log-item log-item-empty';
                     li.textContent = 'Log is empty.';
                     historyList.appendChild(li);
                 } else {
@@ -182,13 +151,15 @@
 
                 // 4. Update Camera Status
                 const cameraStatusEl = document.getElementById('camera-status');
+                const videoStream = document.getElementById('video-stream');
                 if (data.camera_connected) {
                     cameraStatusEl.className = 'camera-connected';
                     cameraStatusEl.innerHTML = '<span></span> Camera Connected';
+                    videoStream.style.display = 'block';
                 } else {
                     cameraStatusEl.className = 'camera-disconnected';
                     cameraStatusEl.innerHTML = '<span></span> Camera Disconnected';
-                    document.getElementById('video-stream').style.display = 'none';
+                    videoStream.style.display = 'none';
                 }
 
             } catch (error) {
@@ -196,19 +167,19 @@
                 const cameraStatusEl = document.getElementById('camera-status');
                 cameraStatusEl.className = 'camera-disconnected';
                 cameraStatusEl.innerHTML = '<span></span> Server Connection Lost';
+                document.getElementById('video-stream').style.display = 'none';
             }
         }
 
-        document.addEventListener('DOMContentLoaded', (event) => {
+        document.addEventListener('DOMContentLoaded', () => {
             updateDateTime();
             setInterval(updateDateTime, 1000);
 
+            // Initial and periodic status update (runs every 500ms for instant updates)
             updateStatus();
-            setInterval(updateStatus, 500); // Fetch status frequently
+            setInterval(updateStatus, 500); 
 
-            // --- Control Button Event Listeners ---
-            document.getElementById('start-btn').addEventListener('click', startCV);
-            document.getElementById('stop-btn').addEventListener('click', stopCV);
+            // Event Listeners for buttons
             document.getElementById('clear-log-btn').addEventListener('click', clearLog);
             document.getElementById('dismiss-alert-btn').addEventListener('click', dismissAlert);
         });
