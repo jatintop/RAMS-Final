@@ -1,5 +1,12 @@
-torch
-torchvision
+# torch
+# torchvision
+
+# instead of torch and torchvision in requirements.txt, install it separately before the rest of the requirements.txt with the following command:
+# for a CPU-only install:
+# pip3 install torch torchvision torchaudio
+# for CUDA (check compatible version online and change url accordingly):
+# pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 
+
 matplotlib
 imageio
 imageio-ffmpeg
@@ -10,11 +17,12 @@ cython
 scikit-image # skimage
 onnxruntime
 gradio
-imutils==0.5.3
+imutils
 opencv-contrib-python==4.8.1.78
-opencv-python>=4.8.1.78
+# opencv-python>=4.8.1.78
 dlib-bin==19.24.6
-numpy>=1.26,<2
+# numpy>=1.26,<2
+numpy
 cmake>=3.26
 scipy>=1.11
 pygame

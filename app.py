@@ -94,168 +94,197 @@ def mouth_aspect_ratio(mouth):
     return mar
 
 # --- Main Computer Vision Logic Function (to be run in a thread) ---
+# --- Main Computer Vision Logic Function (to be run in a thread) ---
 def run_cv_logic():
     global system_status, output_frame, frame_lock, cv_thread_running
 
-    print("[INFO] Initializing camera...")
-    cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-    time.sleep(2.0)
+    print("[INFO] Initializing video source...")
+    # --- LIVE CAMERA CODE (Commented out) ---
+    # cap = cv2.VideoCapture(0)
+    
+    # --- VIDEO FILE CODE (Active) ---
+    cap = cv2.VideoCapture("testing_video.mp4")
+    
+    time.sleep(2.0) # Give camera time to initialize
+    
+    # --- FRAME RATE CONTROL ---: Get the video's original FPS
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if fps == 0:  # If FPS is not available, default to a standard rate
+        fps = 25.0
+    # Calculate the target time for each frame in seconds
+    target_time_per_frame = 1 / fps
     
     with data_lock:
         system_status["camera_connected"] = cap.isOpened()
 
-    # Counters and constants
-    EYE_AR_THRESH = 0.25 # Threshold for eye closure
-    EYE_AR_CONSEC_FRAMES = 5 # Number of consecutive frames eyes must be closed
+    # --- Constants and Counters ---
+    EYE_AR_THRESH = 0.30
+    EYE_AR_CONSEC_FRAMES = 10 # Frames for closed eyes
     YAWN_THRESH = 0.5
+    PHONE_CONSEC_FRAMES = 5 # Frames for phone usage
+    DISTRACTION_CONSEC_FRAMES = 20 # Frames for no face detected
     
     eye_counter = 0
     yawn_counter = 0
     phone_counter = 0
     distraction_counter = 0
     
+    # --- OPTIMIZATION: Variables for frame skipping & processing smaller images ---
+    frame_counter = 0
+    SKIP_FRAMES = 5  # Process every 5th frame for major speed boost
+    last_faces = []
+    last_detections = None
+    
     play_sound('welcome')
 
     while cv_thread_running.is_set():
+         # --- FRAME RATE CONTROL ---: Record the start time of the loop
+        start_time = time.time()
+        
         if not cap.isOpened():
-            with data_lock:
-                system_status["camera_connected"] = False
+            with data_lock: system_status["camera_connected"] = False
             time.sleep(1)
             continue
             
         ret, frame = cap.read()
         if not ret:
-            print("Failed to grab frame")
-            break
+            print("Video ended, looping back to the start...")
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            continue
+
+        frame_counter += 1
+        
+        # --- OPTIMIZATION: Create a smaller frame for faster processing ---
+        original_h, original_w = frame.shape[:2]
+        processing_w = 640
+        scale_ratio = processing_w / original_w
+        processing_h = int(original_h * scale_ratio)
+        small_frame = cv2.resize(frame, (processing_w, processing_h))
+        gray_small = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
+
+        # --- OPTIMIZATION: Run heavy detectors only every SKIP_FRAMES ---
+        if frame_counter % SKIP_FRAMES == 0:
+            last_faces = detector(gray_small, 0)
+            results = model(small_frame)
+            last_detections = results.xyxy[0]
 
         # --- Local variables for this frame's analysis ---
-        is_drowsy = False
-        is_yawning = False
-        is_distracted = False
-        using_phone = False
-        face_detected_in_frame = False
-
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = detector(gray, 0)
-        
-        # Update UI data: reset if no issues
+        is_drowsy, is_yawning, is_distracted, using_phone = False, False, False, False
+        face_detected_in_frame = len(last_faces) > 0
         current_attention_score = system_status["attention_score"]
 
-        if len(faces) > 0:
-            face_detected_in_frame = True
-            # Recover attention score if driver is attentive
-            if current_attention_score < 100:
-                 current_attention_score += 0.25
-            
-            for face in faces:
-                x, y, w, h = face.left(), face.top(), face.width(), face.height()
+        if face_detected_in_frame:
+            distraction_counter = 0 # Reset distraction counter if face is seen
+            if current_attention_score < 100: current_attention_score += 0.25
+
+            for face in last_faces:
+                # --- OPTIMIZATION: Scale landmark points from small frame to original frame ---
+                landmarks = predictor(gray_small, face)
+                landmarks_points = np.array([(int(p.x / scale_ratio), int(p.y / scale_ratio)) for p in landmarks.parts()])
+                
+                # Scale face bounding box
+                x = int(face.left() / scale_ratio)
+                y = int(face.top() / scale_ratio)
+                w = int(face.width() / scale_ratio)
+                h = int(face.height() / scale_ratio)
                 cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
                 
-                landmarks = predictor(gray, face)
-                landmarks_points = np.array([(p.x, p.y) for p in landmarks.parts()])
-                
-                left_eye = landmarks_points[36:42]
-                right_eye = landmarks_points[42:48]
-                mouth = landmarks_points[48:68]
-
-                left_ear = eye_aspect_ratio(left_eye)
-                right_ear = eye_aspect_ratio(right_eye)
+                # Process landmarks (EAR, MAR)
+                left_ear = eye_aspect_ratio(landmarks_points[36:42])
+                right_ear = eye_aspect_ratio(landmarks_points[42:48])
                 ear = (left_ear + right_ear) / 2.0
-                mar = mouth_aspect_ratio(mouth)
+                mar = mouth_aspect_ratio(landmarks_points[48:68])
+                
+                cv2.putText(frame, f"EAR: {ear:.2f}", (300, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-                # Drowsiness detection (closed eyes)
                 if ear < EYE_AR_THRESH:
                     eye_counter += 1
                     if eye_counter >= EYE_AR_CONSEC_FRAMES:
                         is_drowsy = True
-                        play_sound('eye')
-                        cv2.putText(frame, "DROWSINESS ALERT", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                 else:
                     eye_counter = 0
 
-                # Yawning detection
                 if mar > YAWN_THRESH:
                     yawn_counter += 1
-                    if yawn_counter > 2: # Check for a couple of frames to be sure
-                        is_yawning = True
-                        play_sound('alert')
-                        cv2.putText(frame, "YAWNING ALERT", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    if yawn_counter > 2: is_yawning = True
                 else:
                     yawn_counter = 0
         else:
             # No face detected
-            is_distracted = True
             distraction_counter += 1
-            if distraction_counter > 30: # If no face for about a second
-                play_sound('look')
-                cv2.putText(frame, "LOOK AHEAD", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                distraction_counter = 0
-        
+            if distraction_counter >= DISTRACTION_CONSEC_FRAMES:
+                is_distracted = True
+
         # --- YOLOv5 Phone Detection ---
-        results = model(frame)
-        detections = results.xyxy[0]
-        for detection in detections:
-            if int(detection[5]) == 67: # Class index for 'cell phone'
-                using_phone = True
-                phone_counter +=1
-                if phone_counter > 15: # If phone detected for half a second
-                    play_sound('phone')
-                    cv2.putText(frame, "NO PHONE!", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                    phone_counter = 0
-                break # only need one phone detection
+        phone_detected_this_frame = False
+        if last_detections is not None:
+            for detection in last_detections:
+                if int(detection[5]) == 67: # Class index for 'cell phone'
+                    phone_detected_this_frame = True
+                    phone_counter += 1
+                    if phone_counter >= PHONE_CONSEC_FRAMES:
+                        using_phone = True
+                    
+                    # --- OPTIMIZATION: Scale bounding box from small to original frame ---
+                    x1 = int(detection[0] / scale_ratio)
+                    y1 = int(detection[1] / scale_ratio)
+                    x2 = int(detection[2] / scale_ratio)
+                    y2 = int(detection[3] / scale_ratio)
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    break
         
+        if not phone_detected_this_frame:
+            phone_counter = 0 # Reset counter if no phone is seen
+
         # --- Update Shared System Status ---
-        alert_msg = "No Active Alert"
-        alert_sev = ""
-        alertness_level = "High"
-
-        # Prioritize alerts
+        alert_msg, alert_sev, alertness_level = "No Active Alert", "", "High"
+        
         if is_drowsy or is_yawning:
-            alert_msg = "Drowsiness Detected"
-            alert_sev = "HIGH"
-            alertness_level = "Low"
-            current_attention_score -= 2 # Penalize heavily
+            alert_msg, alert_sev, alertness_level = "Drowsiness Detected", "HIGH", "Low"
+            current_attention_score -= 2
+            if is_drowsy: play_sound('eye')
+            if is_yawning: play_sound('alert')
+            cv2.putText(frame, "DROWSINESS ALERT", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
         elif using_phone:
-            alert_msg = "Phone Usage Detected"
-            alert_sev = "MEDIUM"
-            alertness_level = "Medium"
-            current_attention_score -= 1 # Penalize moderately
-        elif is_distracted and not face_detected_in_frame:
-            alert_msg = "Distraction Detected"
-            alert_sev = "LOW"
-            alertness_level = "Medium"
-            current_attention_score -= 0.5 # Penalize lightly
+            alert_msg, alert_sev, alertness_level = "Phone Usage Detected", "MEDIUM", "Medium"
+            current_attention_score -= 1
+            play_sound('phone')
+            cv2.putText(frame, "NO PHONE!", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        elif is_distracted:
+            alert_msg, alert_sev, alertness_level = "Distraction Detected", "LOW", "Medium"
+            current_attention_score -= 0.5
+            play_sound('look')
+            cv2.putText(frame, "LOOK AHEAD", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-        # Clamp attention score between 0 and 100
         current_attention_score = max(0, min(100, current_attention_score))
 
-        # Update the global status dictionary
         with data_lock:
-            if alert_msg != system_status["current_alert"] and alert_msg != "No Active Alert":
+            if alert_msg != "No Active Alert" and alert_msg != system_status.get("last_alert_msg"):
                 timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 system_status["alert_timestamp"] = timestamp
-                # Add to history (and keep history size manageable)
-                system_status["alert_history"].insert(0, {
-                    "alert": alert_msg, "severity": alert_sev, "time": timestamp
-                })
-                if len(system_status["alert_history"]) > 10:
-                    system_status["alert_history"].pop()
+                system_status["alert_history"].insert(0, {"alert": alert_msg, "severity": alert_sev, "time": timestamp})
+                if len(system_status["alert_history"]) > 10: system_status["alert_history"].pop()
             
+            system_status["last_alert_msg"] = alert_msg if alert_msg != "No Active Alert" else system_status.get("last_alert_msg")
             system_status["current_alert"] = alert_msg
             system_status["alert_severity"] = alert_sev
             system_status["alertness"] = alertness_level
             system_status["attention_score"] = int(current_attention_score)
             system_status["camera_connected"] = True
             
-        # Update the global frame for streaming
         with frame_lock:
             cv2.putText(frame, "Driver Monitoring: Active", (10, frame.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
             _, buffer = cv2.imencode('.jpg', frame)
             output_frame = buffer.tobytes()
+            
+        # --- FRAME RATE CONTROL ---: Calculate elapsed time and sleep if necessary
+        elapsed_time = time.time() - start_time
+        sleep_time = target_time_per_frame - elapsed_time
+        if sleep_time > 0:
+            time.sleep(sleep_time)
 
     cap.release()
+    print("[INFO] CV thread has stopped and released the video source.")
 
 # --- Flask Routes ---
 @app.route('/')
@@ -269,6 +298,9 @@ def gen_frames():
     while True:
         with frame_lock:
             if output_frame is None:
+                # If no frame, could show a "disconnected" image
+                # For now, just skip
+                time.sleep(0.1) # prevent busy-waiting
                 continue
             frame = output_frame
         yield (b'--frame\r\n'
@@ -303,7 +335,7 @@ def stop_cv():
     global output_frame
     if cv_thread_running.is_set():
         cv_thread_running.clear()
-        # cv_thread.join() # This can cause a delay
+        # cv_thread.join() # This can cause the UI to hang
         with frame_lock:
             output_frame = None # Clear the last frame to black out the feed
         with data_lock:
